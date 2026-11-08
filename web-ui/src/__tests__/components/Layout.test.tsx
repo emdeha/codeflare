@@ -134,6 +134,7 @@ vi.mock('../../stores/session', () => ({
     get saasMode() { readSessionStoreVersion(); return mockSaasMode; },
     get error() { return null; },
     get loading() { return false; },
+    get allowedAgents() { return ['claude-code', 'codex']; },
     loadSessions: vi.fn(),
     setActiveSession: vi.fn((id: string | null) => { mockActiveSessionId = id; bumpSessionStoreVersion(); }),
     getActiveSession: vi.fn(() => {
@@ -1756,6 +1757,149 @@ describe('Layout Component / REQ-AUTH-014 (session expiry handling on 401)', () 
       bumpSessionStoreVersion();
 
       await waitFor(() => expect((window as any).__headerProps.vaultStatus).not.toBe('preparing'));
+    });
+  });
+
+  describe('REQ-GITHUB-017 external repository link opens a prefilled workspace offer', () => {
+    const openLink = (search: string) => window.history.replaceState(null, '', `/app/${search}`);
+    const settleAfterOfferStep = async () => {
+      const { sessionStore } = await import('../../stores/session');
+      await waitFor(() => expect(sessionStore.loadSessions).toHaveBeenCalled());
+      await waitFor(() => expect(window.location.search, 'WHAT: query must be stripped. WHY: a reload must not re-offer. HOW: reconcileLocation rewrites to /app/.').toBe(''));
+      for (let i = 0; i < 3; i += 1) await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    };
+    const expectPlainDashboard = async () => {
+      const { sessionStore } = await import('../../stores/session');
+      await settleAfterOfferStep();
+      expect(window.location.pathname).toBe('/app/');
+      expect(screen.queryByRole('dialog'), 'WHAT: no offer for an invalid or absent link. WHY: plain dashboard fallback. HOW: parseRepoLink must return null.').toBeNull();
+      expect(sessionStore.createSession, 'WHAT: createSession must not run. WHY: nothing was confirmed. HOW: create only after an agent click.').not.toHaveBeenCalled();
+    };
+    const stubCreate = async () => {
+      const { sessionStore } = await import('../../stores/session');
+      const created = createMockSession({ id: 'sess-clone', name: 'widgets', status: 'stopped' }) as SessionWithStatus;
+      vi.mocked(sessionStore.createSession).mockImplementation(async () => {
+        mockSessions = [...mockSessions, created];
+        bumpSessionStoreVersion();
+        return created;
+      });
+      vi.mocked(sessionStore.startSession).mockResolvedValue();
+      return sessionStore;
+    };
+
+    it('REQ-GITHUB-017 AC1: a valid link offers a prefilled clone confirmation without creating a session', async () => {
+      const { sessionStore } = await import('../../stores/session');
+      openLink('?repo=acme/widgets&ref=main');
+      render(() => <Layout />);
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog.textContent, 'WHAT: offer text. WHY: user must see what will be cloned. HOW: render "Clone <repo> at <ref>".').toContain('Clone acme/widgets at main');
+      expect(screen.getByRole('button', { name: /Claude Code/ })).toBeTruthy();
+      await settleAfterOfferStep();
+      expect(window.location.pathname).toBe('/app/');
+      expect(screen.getByRole('dialog'), 'WHAT: offer still showing after the strip. WHY: it awaits the user. HOW: keep it until choice or dismiss.').toBeTruthy();
+      expect(sessionStore.createSession, 'WHAT: no silent creation. WHY: link must not create without a click. HOW: wait for agent choice.').not.toHaveBeenCalled();
+    });
+
+    it('REQ-GITHUB-017 AC2: choosing an agent creates the clone session, starts it and enters its workspace', async () => {
+      const sessionStore = await stubCreate();
+      openLink('?repo=acme/widgets&ref=main');
+      render(() => <Layout />);
+
+      await screen.findByRole('dialog');
+      fireEvent.click(screen.getByRole('button', { name: /Claude Code/ }));
+
+      await waitFor(() => expect(sessionStore.startSession).toHaveBeenCalledWith('sess-clone'));
+      expect(sessionStore.createSession).toHaveBeenCalledTimes(1);
+      expect(sessionStore.createSession, 'WHAT: clone argument {repo, ref}. WHY: existing clone-on-create path. HOW: pass the parsed link as 4th argument.').toHaveBeenCalledWith('widgets', 'claude-code', undefined, { repo: 'acme/widgets', ref: 'main' });
+      expect(mockActiveSessionId).toBe('sess-clone');
+      expect(terminalWorkspaceStore.setSingleSessionWorkspace).toHaveBeenCalledWith('sess-clone', '1', expect.objectContaining({ id: 'sess-clone' }));
+    });
+
+    it('REQ-GITHUB-017 AC3: a link without ref sends a clone with no ref key', async () => {
+      const sessionStore = await stubCreate();
+      openLink('?repo=acme/widgets');
+      render(() => <Layout />);
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog.textContent).toContain('Clone acme/widgets');
+      fireEvent.click(screen.getByRole('button', { name: /Claude Code/ }));
+
+      await waitFor(() => expect(sessionStore.createSession).toHaveBeenCalledTimes(1));
+      const clone = vi.mocked(sessionStore.createSession).mock.calls[0][3];
+      expect(clone).toEqual({ repo: 'acme/widgets' });
+      expect(Object.keys(clone ?? {}), 'WHAT: ref key absent. WHY: link named no ref. HOW: omit ref rather than undefined.').toEqual(['repo']);
+    });
+
+    it('REQ-GITHUB-017 AC4 control: the settle point is late enough to see a valid offer', async () => {
+      openLink('?repo=acme/widgets&ref=main');
+      render(() => <Layout />);
+      await settleAfterOfferStep();
+      expect(screen.queryByRole('dialog'), 'WHAT: valid offer visible after settle. WHY: proves the settle helper waits long enough for invalid-link checks to be meaningful. HOW: render the offer.').not.toBeNull();
+    });
+
+    const expectOfferDiscarded = async () => {
+      const { sessionStore } = await import('../../stores/session');
+      await waitFor(() => expect(screen.queryByRole('dialog'), 'WHAT: dismissed offer must close. WHY: dismiss discards the link intent. HOW: onClose must clear the offer.').toBeNull());
+      await settleAfterOfferStep();
+      expect(screen.queryByRole('dialog'), 'WHAT: offer returned after dismiss. WHY: intent is cleared on dismiss. HOW: do not re-set the offer after onClose.').toBeNull();
+      expect(sessionStore.createSession, 'WHAT: createSession must not run. WHY: dismiss is not a confirmation. HOW: create only after an agent click.').not.toHaveBeenCalled();
+      expect(sessionStore.startSession, 'WHAT: startSession must not run. WHY: nothing was created. HOW: start only after creation.').not.toHaveBeenCalled();
+    };
+
+    it('REQ-GITHUB-017 AC6: pressing Escape on the offer discards the link', async () => {
+      openLink('?repo=acme/widgets&ref=main');
+      render(() => <Layout />);
+
+      await screen.findByRole('dialog');
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      await expectOfferDiscarded();
+    });
+
+    it('REQ-GITHUB-017 AC6: clicking the backdrop of the offer discards the link', async () => {
+      openLink('?repo=acme/widgets&ref=main');
+      render(() => <Layout />);
+
+      await screen.findByRole('dialog');
+      const backdrop = document.querySelector('.csd-backdrop');
+      expect(backdrop, 'WHAT: backdrop element. WHY: user dismisses by clicking outside. HOW: render .csd-backdrop in offer mode.').not.toBeNull();
+      fireEvent.click(backdrop as Element);
+
+      await expectOfferDiscarded();
+    });
+
+    it('REQ-GITHUB-017 AC1: the offer waits for sessions to load', async () => {
+      const { sessionStore } = await import('../../stores/session');
+      let finishLoading: () => void = () => {};
+      vi.mocked(sessionStore.loadSessions).mockImplementationOnce(
+        () => new Promise<void>((resolve) => { finishLoading = resolve; }),
+      );
+      openLink('?repo=acme/widgets&ref=main');
+      render(() => <Layout />);
+
+      await waitFor(() => expect(sessionStore.loadSessions).toHaveBeenCalled());
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(screen.queryByRole('dialog'), 'WHAT: no offer while sessions load. WHY: route is not ready. HOW: set the offer after loadSessions resolves.').toBeNull();
+
+      finishLoading();
+      expect(await screen.findByRole('dialog')).toBeTruthy();
+    });
+
+    it.each([
+      ['a repo that is not owner/name', '?repo=not-a-valid-repo'],
+      ['a repo with three segments', '?repo=a/b/c'],
+      ['a ref starting with a hyphen', '?repo=acme/widgets&ref=-bad'],
+      ['a ref of 256 characters', `?repo=acme/widgets&ref=${'a'.repeat(256)}`],
+    ])('REQ-GITHUB-017 AC4: %s shows the plain dashboard', async (_label, search) => {
+      openLink(search);
+      render(() => <Layout />);
+      await expectPlainDashboard();
+    });
+
+    it('REQ-GITHUB-017 AC5: a plain dashboard link shows no offer', async () => {
+      render(() => <Layout />);
+      await expectPlainDashboard();
     });
   });
 

@@ -22,6 +22,8 @@ import { requestBrowserStoragePersistence } from '../lib/browser-storage-persist
 import { dashboardPath, parseSessionPath, sessionPath } from '../lib/session-path';
 import { createBrowserIdeWindowOpener } from '../lib/browser-ide-window';
 import { isMountedLifecycle } from '../lib/session-presentation';
+import { parseRepoLink, type RepoLink } from '../lib/repo-link';
+import CreateSessionDialog from './CreateSessionDialog';
 
 type ViewState = 'dashboard' | 'expanding' | 'terminal' | 'collapsing';
 
@@ -77,6 +79,7 @@ const Layout: Component<LayoutProps> = (props) => {
   const [isSettingsOpen, setIsSettingsOpen] = createSignal(false);
   const [isStoragePanelOpen, setIsStoragePanelOpen] = createSignal(false);
   const [showTilingOverlay, setShowTilingOverlay] = createSignal(false);
+  const [repoOffer, setRepoOffer] = createSignal<RepoLink | null>(null);
   const [viewState, setViewState] = createSignal<ViewState>('dashboard');
   let viewTransitionTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -366,6 +369,8 @@ const Layout: Component<LayoutProps> = (props) => {
   onMount(() => {
     let disposed = false;
     let routeReady = false;
+    // Read before reconcileLocation rewrites the URL and drops the query.
+    const pendingRepoLink = parseRepoLink(window.location.search);
     const handlePopState = () => {
       if (routeReady) reconcileLocation(true);
     };
@@ -375,6 +380,7 @@ const Layout: Component<LayoutProps> = (props) => {
       if (disposed) return;
       routeReady = true;
       reconcileLocation(false);
+      if (pendingRepoLink) setRepoOffer(pendingRepoLink);
     });
     sessionStore.loadPreferences();
     // Apply saved accent color
@@ -621,8 +627,13 @@ const Layout: Component<LayoutProps> = (props) => {
     await sessionStore.deleteSession(id);
   };
 
-  const handleCreateSession = async (name: string, agentType?: AgentType, tabConfig?: TabConfig[]) => {
-    const session = await sessionStore.createSession(name, agentType, tabConfig);
+  const handleCreateSession = async (
+    name: string,
+    agentType?: AgentType,
+    tabConfig?: TabConfig[],
+    clone?: RepoLink,
+  ) => {
+    const session = await sessionStore.createSession(name, agentType, tabConfig, clone);
     if (!session) return;
 
     if (session.workspace === 'vscode') {
@@ -638,6 +649,12 @@ const Layout: Component<LayoutProps> = (props) => {
       sessionStore.updatePreferences({ lastAgentType: agentType });
     }
     await sessionStore.startSession(session.id);
+  };
+
+  const handleRepoOfferSelect = (offer: RepoLink, agentType: AgentType, tabConfig?: TabConfig[]) => {
+    setRepoOffer(null);
+    const name = offer.repo.slice(offer.repo.indexOf('/') + 1);
+    void handleCreateSession(name, agentType, tabConfig, offer);
   };
 
   const handleOpenMultiView = () => {
@@ -883,6 +900,16 @@ const Layout: Component<LayoutProps> = (props) => {
 
       {/* Settings Panel - slides in from right */}
       <SettingsPanel isOpen={isSettingsOpen()} onClose={handleSettingsClose} currentUserEmail={props.userName} currentUserRole={props.userRole} currentUserAccessTier={props.userAccessTier} enterpriseMode={props.enterpriseMode} />
+      <Show when={repoOffer()}>
+        {(offer) => (
+          <CreateSessionDialog
+            isOpen
+            offer={offer()}
+            onClose={() => setRepoOffer(null)}
+            onSelect={(agentType, tabConfig) => handleRepoOfferSelect(offer(), agentType, tabConfig)}
+          />
+        )}
+      </Show>
 
       {/* Storage Panel - slides in from right */}
       <StoragePanel isOpen={isStoragePanelOpen()} onClose={handleStoragePanelClose} />

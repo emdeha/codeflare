@@ -10,6 +10,7 @@ interface CreateSessionDialogProps {
   onClose: () => void;
   onSelect: (agentType: AgentType, tabConfig?: TabConfig[]) => void;
   anchorRef?: HTMLElement;
+  offer?: { repo: string; ref?: string };
 }
 
 const CreateSessionDialog: Component<CreateSessionDialogProps> = (props) => {
@@ -99,19 +100,27 @@ const CreateSessionDialog: Component<CreateSessionDialogProps> = (props) => {
 
   return (
     <Show when={props.isOpen}>
-      <div class="csd-backdrop" onClick={() => props.onClose()} />
+      <div class={`csd-backdrop ${props.offer ? 'csd-backdrop--offer' : ''}`} onClick={() => props.onClose()} />
       <div
         ref={dialogRef}
-        class="create-session-dialog"
+        class={`create-session-dialog ${props.offer ? 'create-session-dialog--offer' : ''}`}
         data-testid="create-session-dialog"
         role="dialog"
-        aria-label="Create new session"
+        aria-label={props.offer ? 'Clone repository' : 'Create new session'}
         style={{
           top: `${position().top}px`,
           left: `${position().left}px`,
           width: `${position().width}px`,
         }}
       >
+        <Show when={props.offer}>
+          {(offer) => (
+            <h2 class="csd-offer-title">
+              Clone {offer().repo}
+              <Show when={offer().ref}> at {offer().ref}</Show>
+            </h2>
+          )}
+        </Show>
         {/* Agent selection */}
         <div class="csd-section">
           <div class="csd-section-header">

@@ -118,6 +118,32 @@
   display: none;
 }
 
+/* Offer mode: anchor-less, centred modal with a visible backdrop */
+.csd-backdrop--offer {
+  display: block;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 99;
+}
+
+.create-session-dialog--offer {
+  top: 50% !important;
+  left: 50% !important;
+  width: min(420px, calc(100vw - var(--space-4) * 2)) !important;
+  transform: translate(-50%, -50%);
+  animation: none;
+}
+
+.csd-offer-title {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
 /* ======================================
    Mobile: full-width bottom sheet dialog
    ====================================== */
@@ -135,6 +161,10 @@
     animation: csd-slide-up 200ms ease-out;
     z-index: 210;
     overflow-y: auto;
+  }
+
+  .create-session-dialog--offer {
+    transform: none;
   }
 
   @keyframes csd-slide-up {

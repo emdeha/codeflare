@@ -237,6 +237,38 @@ Connecting a user's GitHub account, browsing repositories, cloning them into ses
 
 ---
 
+### REQ-GITHUB-017: External repository link opens a prefilled workspace offer
+
+**Intent:** A link of the form `/app/?repo=<owner>/<name>[&ref=<branch>]` lets an external tool send a user straight into coding: the dashboard offers a workspace that clones that repository, and nothing is created until the user confirms.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+
+1. A valid link shows a confirmation naming the repository and ref ("Clone <repo> at <ref>") with the agent choices of the new-session dialog, creates no session until an agent is chosen, and removes the query from the address bar. <!-- @impl: web-ui/src/components/Layout.tsx::Layout --> <!-- @impl: web-ui/src/components/CreateSessionDialog.tsx::CreateSessionDialog --> <!-- @impl: web-ui/src/lib/repo-link.ts::parseRepoLink --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC1: a valid link offers a prefilled clone confirmation without creating a session) --> <!-- @test: web-ui/src/__tests__/lib/repo-link.test.ts (REQ-GITHUB-017 parser: a valid repo and ref yield both) -->
+2. Choosing an agent creates one session named after the repository with clone `{repo, ref}` through the existing session creation call, starts it and enters its workspace. <!-- @impl: web-ui/src/components/Layout.tsx::Layout --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC2: choosing an agent creates the clone session, starts it and enters its workspace) -->
+3. A link without a ref sends a clone with no `ref` key. <!-- @impl: web-ui/src/components/Layout.tsx::Layout --> <!-- @impl: web-ui/src/lib/repo-link.ts::parseRepoLink --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC3: a link without ref sends a clone with no ref key) --> <!-- @test: web-ui/src/__tests__/lib/repo-link.test.ts (REQ-GITHUB-017 parser: a valid repo yields only the repo) -->
+4. A missing, malformed, repeated or empty `repo` or `ref`, a `ref` over 255 characters, or a `ref` the session API would reject shows the plain dashboard: no offer and no session. A bad `ref` is never dropped. <!-- @impl: web-ui/src/components/Layout.tsx::Layout --> <!-- @impl: web-ui/src/lib/repo-link.ts::parseRepoLink --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC4: a repo that is not owner/name shows the plain dashboard) --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC4: a repo with three segments shows the plain dashboard) --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC4: a ref starting with a hyphen shows the plain dashboard) --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC4: a ref of 256 characters shows the plain dashboard) --> <!-- @test: web-ui/src/__tests__/lib/repo-link.test.ts (REQ-GITHUB-017 parser: a 255 character ref is accepted and 256 is refused) -->
+5. A link without the parameters shows no offer and behaves as before. <!-- @impl: web-ui/src/components/Layout.tsx::Layout --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC5: a plain dashboard link shows no offer) -->
+6. Dismissing the offer (Escape or backdrop) discards the link intent; a reload does not re-offer because the query has been removed. <!-- @impl: web-ui/src/components/Layout.tsx::Layout --> <!-- @impl: web-ui/src/components/CreateSessionDialog.tsx::CreateSessionDialog --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC6: pressing Escape on the offer discards the link) --> <!-- @test: web-ui/src/__tests__/components/Layout.test.tsx (REQ-GITHUB-017 AC6: clicking the backdrop of the offer discards the link) -->
+
+**Constraints:**
+
+- `repo` and `ref` follow the clone rules of the session creation API ([REQ-GITHUB-004](#req-github-004-clone-a-repository-into-a-session)); the Worker remains the validation authority.
+- No backend or API change: the existing clone-on-create call is reused.
+- A link never creates a workspace silently.
+- Whether the repository exists or the user can access it is not guaranteed by the offer; a failed clone follows [REQ-GITHUB-004](#req-github-004-clone-a-repository-into-a-session).
+
+**Priority:** P2
+
+**Dependencies:** [REQ-GITHUB-004](#req-github-004-clone-a-repository-into-a-session)
+
+**Verification:** Automated: [Layout.test.tsx](../../web-ui/src/__tests__/components/Layout.test.tsx), [repo-link.test.ts](../../web-ui/src/__tests__/lib/repo-link.test.ts)
+
+**Status:** Implemented
+
+---
+
 ### REQ-GITHUB-005: Disconnect and offboarding revocation
 
 **Intent:** Disconnecting or offboarding removes the local GitHub credential after a best-effort provider revocation.
